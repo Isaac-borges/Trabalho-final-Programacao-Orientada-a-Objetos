@@ -23,6 +23,10 @@ class Acao {
         this._valor_dano = valor_dano;
         this._data_hora = data_hora;
     }
+
+    get descricao(): string {
+        return this._descricao;
+    }
 }
 
 export { Acao };

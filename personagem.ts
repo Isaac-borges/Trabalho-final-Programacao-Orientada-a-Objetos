@@ -1,7 +1,17 @@
 import { Acao } from "./acao";
-import { UnsuccessfulAttack } from "./exceptions";
+import {
+    UnsuccessfulAttack,
+    AplicacaoException,
+    CharacterNotFound,
+    DeadCantAttack,
+    DeadCantBeAttacked,
+    CantAttackItself,
+    ValueIsNotValid,
+} from "./exceptions";
 
-class Personagem {
+import { Validate } from "./validate";
+
+class Personagem extends Validate {
     private _id: number;
     private _nome: string;
     private _vida: number;
@@ -11,8 +21,11 @@ class Personagem {
     private _id_acao: number = 0;
 
     constructor(id: number, nome: string, vida: number, ataque: number) {
+        super();
         this._id = id;
+        this.validarTamanhoNome(nome, 1, 9);
         this._nome = nome;
+        this.validarValor(vida, 1, 100);
         this._vida = vida;
         this._vida_maxima = vida;
         this._ataque = ataque;
@@ -24,20 +37,35 @@ class Personagem {
         let descricao_ataque: string;
 
         if (!alvo.estaVivo()) {
-            throw new UnsuccessfulAttack("O ALVO ESTÁ MORTO!");
+            throw new DeadCantBeAttacked("O ALVO ESTÁ MORTO!");
         }
 
         if (!this.estaVivo()) {
-            throw new UnsuccessfulAttack("ATACANTE JÁ ESTÁ MORTO!");
+            throw new DeadCantAttack("ATACANTE JÁ ESTÁ MORTO!");
         }
 
         if (this.nome == alvo.nome) {
-            throw new UnsuccessfulAttack("NÃO PODE ATACAR A SI MESMO!");
+            throw new CantAttackItself("NÃO PODE ATACAR A SI MESMO!");
         }
 
         let dano_final = this.causarDano(alvo, dano_base);
 
         descricao_ataque = this.gerarDescricaoAtaque(alvo, dano_final);
+
+        if (dano_final === 0) {
+            descricao_ataque = `\nO ATAQUE DE ${this.nome_pad} FOI APARADO POR ${alvo.nome_pad}!\n`;
+
+            alvo.registrarAcao(
+                new Acao(
+                    ++alvo.id_acao,
+                    alvo,
+                    this,
+                    `\n${alvo.nome_pad} DEFENDEU UM ATAQUE DE ${this.nome_pad}!`,
+                    0,
+                    new Date(),
+                ),
+            );
+        }
 
         acao_ataque = new Acao(
             ++this._id_acao,
@@ -53,17 +81,17 @@ class Personagem {
     }
 
     causarDano(alvo: Personagem, dano: number): number {
-        alvo.receberDano(dano);
-        return dano;
+        return alvo.receberDano(dano);
     }
 
     calcularDano(): number {
         return this._ataque;
     }
 
-    receberDano(valor: number): void {
-        this._vida = this._vida - valor;
+    receberDano(valor: number): number {
+        this._vida -= valor;
         if (this._vida < 0) this._vida = 0;
+        return valor;
     }
 
     receberDanoVerdadeiro(valor: number): void {
@@ -79,32 +107,16 @@ class Personagem {
         this._historico.push(acao);
     }
 
+    historicoLength(): number {
+        return this._historico.length;
+    }
+
+    getAcoesDesde(inicio: number): Acao[] {
+        return this._historico.slice(inicio);
+    }
+
     gerarDescricaoAtaque(alvo: Personagem, dano: number): string {
-        let descricao_ataque: string = `${this.nome_pad} ATACOU ${alvo.nome_pad} E TIROU ${dano} DE VIDA!`;
-
-        if (this instanceof Guerreiro) {
-            if (this.vida <= Math.floor(this.vida_maxima * 0.3)) {
-                descricao_ataque = `${this.nome_pad} FEZ UM ATAQUE FURIOSO EM ${alvo.nome_pad}!`;
-            }
-        } else if (this instanceof Mago) {
-            descricao_ataque = `${this.nome_pad} LANÇOU UMA MAGIA EM ${alvo.nome_pad}!\n`;
-
-            if (alvo instanceof Guerreiro) {
-                descricao_ataque =
-                    descricao_ataque + `A DEFESA DO ALVO FOI IGNORADA!\n`;
-            } else if (alvo instanceof Arqueiro) {
-                descricao_ataque =
-                    descricao_ataque + `E O ALVO SOFREU DANO DOBRADO!\n`;
-            }
-
-            descricao_ataque = descricao_ataque + `A MAGIA CUSTOU 10 DE VIDA.`;
-        } else if (this instanceof Arqueiro) {
-            descricao_ataque = `${this.nome_pad} ATIROU UMA FLECHA EM ${alvo.nome_pad} E CAUSOU ${dano} DE DANO!`;
-
-            if (this.sorteio_multiplo) {
-                descricao_ataque = `${this.nome_pad} ATIROU ${this.ataque_multiplo} FLECHAS EM ${alvo.nome_pad} E CAUSOU ${dano} DE DANO!`;
-            }
-        }
+        let descricao_ataque: string = `\n${this.nome_pad} ATACOU ${alvo.nome_pad} E TIROU ${dano} DE VIDA!`;
 
         return descricao_ataque;
     }
@@ -143,6 +155,10 @@ class Personagem {
         return this._vida;
     }
 
+    set vida(valor_novo: number) {
+        this._vida = valor_novo;
+    }
+
     get vida_maxima(): number {
         return this._vida_maxima;
     }
@@ -166,12 +182,14 @@ class Guerreiro extends Personagem {
         this._defesa = defesa;
     }
 
-    receberDano(valor: number): void {
-        if (valor < this._defesa) {
-            throw new UnsuccessfulAttack(`${this.nome} BLOQUEOU O ATAQUE!`);
+    receberDano(valor: number): number {
+        if (valor <= this._defesa) {
+            return 0;
         }
 
-        super.receberDano(valor - this._defesa);
+        const dano_real = valor - this._defesa;
+        super.receberDano(dano_real);
+        return dano_real;
     }
 
     calcularDano(): number {
@@ -182,6 +200,14 @@ class Guerreiro extends Personagem {
         }
 
         return dano;
+    }
+
+    gerarDescricaoAtaque(alvo: Personagem, dano: number): string {
+        if (this.vida <= Math.floor(this.vida_maxima * 0.3)) {
+            return `${this.nome_pad} FEZ UM ATAQUE FURIOSO EM ${alvo.nome_pad} E CAUSOU ${dano} DE DANO!`;
+        }
+
+        return `${this.nome_pad} ATACOU ${alvo.nome_pad} E TIROU ${dano} DE VIDA!`;
     }
 
     get defesa(): number {
@@ -212,6 +238,22 @@ class Mago extends Personagem {
 
         this.estaVivo();
         return dano_final;
+    }
+
+    gerarDescricaoAtaque(alvo: Personagem, dano: number): string {
+        let texto = `\n${this.nome_pad} LANÇOU UMA MAGIA EM ${alvo.nome_pad}!\n`;
+
+        if (alvo instanceof Guerreiro) {
+            texto += `A DEFESA DO ALVO FOI IGNORADA!\n`;
+        }
+
+        if (alvo instanceof Arqueiro) {
+            texto += `E O ALVO SOFREU DANO DOBRADO!\n`;
+        }
+
+        texto += `CAUSOU ${dano} DE DANO!\n`;
+
+        return texto;
     }
 }
 
@@ -251,48 +293,79 @@ class Arqueiro extends Personagem {
     get sorteio_multiplo(): boolean {
         return this._sorteio_multiplo;
     }
-}
 
-function printarVidas(personagens: Personagem[]): void {
-    for (let personagem of personagens) {
-        console.log("VIDA DO " + personagem.nome + ": " + personagem.vida);
-    }
-}
-
-function printarAcoes(personagens: Personagem[]): void {
-    for (let personagem of personagens) {
-        for (let acao of personagem.acoes) {
-            console.log(acao.descricao);
+    gerarDescricaoAtaque(alvo: Personagem, dano: number): string {
+        if (this.sorteio_multiplo) {
+            return `${this.nome_pad} ATIROU ${this.ataque_multiplo} FLECHAS EM ${alvo.nome_pad} E CAUSOU ${dano} DE DANO!`;
         }
+
+        return `${this.nome_pad} ATIROU UMA FLECHA EM ${alvo.nome_pad} E CAUSOU ${dano} DE DANO!`;
     }
 }
 
-function main(): void {
-    let guerreiro: Guerreiro = new Guerreiro(1, "THORFINN", 100, 20, 21);
-    let mago: Mago = new Mago(2, "VEIGAR", 80, 20);
-    let arqueiro: Arqueiro = new Arqueiro(3, "LINK", 100, 10, 3);
+class Patrulheiro extends Personagem {
+    private _companheiro_animal_vida_max: number;
+    private _companheiro_animal_vida_atual: number;
 
-    try {
-        guerreiro.atacar(arqueiro);
-        mago.atacar(guerreiro);
-        guerreiro.atacar(mago);
-        arqueiro.atacar(guerreiro);
-        mago.atacar(guerreiro);
-        mago.atacar(guerreiro);
-        mago.atacar(guerreiro);
-        mago.atacar(guerreiro);
-    } catch (error: any) {
-        if (error instanceof UnsuccessfulAttack) {
-            console.log("Erro!");
-        } else {
-            console.log("Sem erro!");
+    constructor(id: number, nome: string, vida: number, ataque: number) {
+        super(id, nome, vida, ataque);
+
+        this._companheiro_animal_vida_max = Math.floor(this.vida_maxima * 0.25);
+        this._companheiro_animal_vida_atual = this._companheiro_animal_vida_max;
+    }
+
+    companheiroAnimalEstaVivo(): boolean {
+        return this._companheiro_animal_vida_atual > 0;
+    }
+
+    causarDano(alvo: Personagem, dano_base: number): number {
+        let dano_final = dano_base;
+
+        if (this.companheiroAnimalEstaVivo()) {
+            dano_final = Math.floor(dano_final * 1.75);
         }
+
+        alvo.receberDano(dano_final);
+
+        return dano_final;
     }
 
-    printarVidas([guerreiro, mago, arqueiro]);
-    printarAcoes([guerreiro, mago, arqueiro]);
+    receberDano(valor: number): number {
+        let resto = valor;
+
+        if (this.companheiroAnimalEstaVivo()) {
+            const absorvido = Math.min(
+                resto,
+                this._companheiro_animal_vida_atual,
+            );
+            this._companheiro_animal_vida_atual =
+                this._companheiro_animal_vida_atual - absorvido;
+            resto -= absorvido;
+        }
+
+        if (resto > 0) {
+            this.vida -= resto;
+            if (this.vida < 0) this.vida = 0;
+        }
+
+        return valor;
+    }
+
+    gerarDescricaoAtaque(alvo: Personagem, dano: number): string {
+        if (this.companheiroAnimalEstaVivo()) {
+            return `\n${this.nome_pad} E SEU COMPANHEIRO ANIMAL ATACARAM ${alvo.nome_pad}! ${alvo.nome_pad} SOFREU ${dano} DE DANO!`;
+        }
+
+        return `\n${this.nome_pad} ATACOU ${alvo.nome_pad}! ${alvo.nome_pad} SOFREU ${dano} DE DANO!`;
+    }
+
+    get vida_companheiro_max(): number {
+        return this._companheiro_animal_vida_max;
+    }
+
+    get vida_companheiro_atual(): number {
+        return this._companheiro_animal_vida_atual;
+    }
 }
 
-main();
-
-export { Personagem, Guerreiro, Mago, Arqueiro };
+export { Personagem, Guerreiro, Mago, Arqueiro, Patrulheiro };
